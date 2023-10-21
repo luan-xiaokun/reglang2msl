@@ -1,0 +1,89 @@
+start: (knowledgebase_block | rule_block)*
+
+knowledgebase_block: "knowledgebase" NAME knowledge_decl+ "end"
+
+knowledge_decl: "knowledge" NAME "=" arith_expr ";"              -> knowledge_init
+             | NAME "." _knowledge_func "(" arith_expr ")" ";"    -> knowledge_alt
+
+!_knowledge_func: "add" | "del"
+
+rule_block: "rule" NAME reg_scope rule_stmt* "end"
+
+reg_scope: "reg" logic_expr ":"
+
+?rule_stmt: require_stmt | prohibit_stmt
+
+require_stmt: "require" logic_expr ";"
+
+prohibit_stmt: "prohibit" logic_expr ";"
+
+?logic_expr: or_expr
+
+?or_expr: and_expr | or_expr "or" and_expr
+
+?and_expr: logic_atom | and_expr "and" logic_atom
+
+?logic_atom: compare_expr
+           | membership
+           | "at_least" "(" arith_expr "," (membership | compare_expr) ")"   -> at_least
+           | "at_most" "(" arith_expr "," (membership | compare_expr) ")"    -> at_most
+           | "any_item" "(" (membership | compare_expr) ")"                  -> any_item
+           | "all_items" "(" (membership | compare_expr) ")"                 -> all_items
+           | "true"                                                          -> const_true
+           | "false"                                                         -> const_false
+           | "(" logic_expr ")"
+
+membership: (array | var) "in" knowledge_ref
+
+compare_expr: arith_expr _compare_op arith_expr
+
+!_compare_op: "==" | "!=" | "<" | "<=" | ">" | ">="
+
+?arith_expr: term
+
+?term: factor | term _add_op factor
+
+?factor: power | factor _mul_op power
+
+?power: atom ("^" power)?
+
+?atom: "length" "(" (array | var) ")"             -> length
+     | "count" "(" logic_expr ("," logic_expr)* ")" -> count
+     | "(" arith_expr ")"
+     | array
+     | var
+     | NUMBER -> number
+     | STRING -> string
+
+!_add_op: "+" | "-"
+!_mul_op: "*" | "/" | "%"
+
+?var: knowledge_ref
+    | "tx" "." _tx_basic                                    -> tx_basic
+    | "tx" "." _tx_state "(" arith_expr ")" "." var_ref     -> tx_state
+    | "tx" "." "args" "." var_ref                           -> tx_args
+    | "contract" "(" arith_expr ")" "." _contract_basic     -> contract_basic
+    | "contract" "(" arith_expr ")" "." "state" "." var_ref -> contract_state
+    | var "[" arith_expr "]"                                -> array_item
+    | var_ref
+
+knowledge_ref: "knowledgebase" "(" NAME ")" "." NAME
+
+var_ref: NAME
+
+!_tx_basic: "from" | "to" | "function"
+!_tx_state: "readset" | "writeset"
+!_contract_basic: "name" | "owner"
+
+array: "[" NUMBER ("," NUMBER)* "]"
+     | "[" STRING ("," STRING)* "]"
+
+%import common.WS   -> WS
+%import common.CPP_COMMENT  -> SL_COMMENT
+%import common.C_COMMENT    -> ML_COMMENT
+%import common.CNAME    -> NAME
+%import common.INT      -> NUMBER
+%import common.ESCAPED_STRING   -> STRING
+%ignore WS
+%ignore SL_COMMENT
+%ignore ML_COMMENT

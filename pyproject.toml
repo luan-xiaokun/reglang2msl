@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reglang2msl"
+version = "0.1.0"
+description = "Translating RegLang specification into MSL code"
+authors = [{ name = "Xiaokun Luan", email = "luanxiaokun@pku.edu.cn" }]
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = ["Topic :: Software Development :: Code Generators"]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["src"]
+
+[tool.black]
+line-length = 100
