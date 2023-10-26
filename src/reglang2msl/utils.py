@@ -58,7 +58,7 @@ class MslAstSerializer(Interpreter):
             right_str = "(" + right_str + ")"
         return f"{left_str} {operator} {right_str}"
 
-    def rule(self, *children: Tree[Token]) -> str:
+    def transition_body(self, *children: Tree[Token]) -> str:
         """Entrance to process rule_translator results"""
         rules = self.visit_children(Tree("rule", list(children)))
         return "".join(rules)

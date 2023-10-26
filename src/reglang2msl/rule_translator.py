@@ -113,7 +113,7 @@ class RuleTransitionBuilder(Transformer):
             return nested + max(get_nested_level(child, name) for child in tree.children)
 
         rule_blocks = filter(
-            lambda child: isinstance(child, Tree) and child.data in ["skip_stmt", "assign_stmt"],
+            lambda tree: isinstance(tree, Tree) and tree.data in ["skip_stmt", "assign_stmt"],
             blocks,
         )
         rules = list(rule_blocks)
@@ -149,7 +149,7 @@ class RuleTransitionBuilder(Transformer):
 
             error_code_prefix += ERROR_CODE_STEP
 
-        return Tree("rule", cast(List[Token | Tree[Token]], rules))
+        return Tree("transition_body", cast(List[Token | Tree[Token]], rules))
 
     # default: number, string, array, var_ref, array_item
     def rule_block(self, _: Token, guard: Tree[Token], *stmts: Tree[Token]) -> Tree[Token]:
