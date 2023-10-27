@@ -8,14 +8,15 @@ from lark import Lark
 
 @pytest.fixture(scope="module")
 def parser() -> Lark:
+    """Load the RegLang grammar and return a parser"""
     with open("src/reglang2msl/resources/reglang.lark", encoding="utf-8") as grammar_file:
         grammar = grammar_file.read()
-    parser = Lark(grammar, parser="lalr", strict=True)
-    return parser
+    return Lark(grammar, parser="lalr", strict=True)
 
 
 @pytest.fixture(scope="module")
 def test_examples() -> List[str]:
+    """Examples of RegLang code"""
     examples_iter = Path("tests/reglang_examples").iterdir()
     tests = []
     for example_path in examples_iter:
