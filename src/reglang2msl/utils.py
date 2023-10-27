@@ -89,11 +89,11 @@ class MslAstSerializer(Interpreter):
 
     def skip_stmt(self, _: Tree[Token]) -> str:
         """Serialize skip_stmt"""
-        return ";"
+        return ";\n"
 
     def assign_stmt(self, left: Tree[Token], operator: Token, right: Tree[Token]) -> str:
         """Serialize assign_stmt"""
-        return f"{self._visit_tree(left)} {operator.value} {self._visit_tree(right)};"
+        return f"{self._visit_tree(left)} {operator.value} {self._visit_tree(right)};\n"
 
     def or_expr(self, left: Tree[Token], right: Tree[Token]) -> str:
         """Serialize or_expr"""

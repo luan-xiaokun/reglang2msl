@@ -363,8 +363,7 @@ class RuleTranslator:
 {read_input}
         checking -> {{
             output.value = 0;
-{rules}
-            pass = (output.value == 0);
+{rules}            pass = (output.value == 0);
             checking = false;
             sync output;
         }}
