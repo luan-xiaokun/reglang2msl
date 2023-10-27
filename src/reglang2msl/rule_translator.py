@@ -103,7 +103,7 @@ class RuleTransitionBuilder(Transformer):
     def start(self, *blocks: Tree[Token]) -> Tree[Token]:
         """Translate rule blocks into several if-then statements and change error codes"""
 
-        def get_nested_level(tree: Tree[Token] | Token, name: str) -> int:
+        def get_nested_level(tree: Union[Tree[Token], Token], name: str) -> int:
             """Get the nested level of a tree with specific name"""
             if isinstance(tree, Token):
                 return 0
