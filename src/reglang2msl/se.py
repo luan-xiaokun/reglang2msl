@@ -5,7 +5,7 @@ import cvc5
 from lark import Tree, Token
 from lark.visitors import Interpreter, v_args
 
-from .knowledge_base_translator import KnowledgeBaseType
+from .knowledge_base_translator import KnowledgeBaseType, KnowledgeType
 from .utils import string2int
 
 
@@ -14,10 +14,34 @@ class RuleSatChecker(Interpreter):
     """Symbolic execution to check satisfiability of RegLang"""
 
     def __init__(self, kb_dict: Dict[str, KnowledgeBaseType]) -> None:
-        self.kb_dict = kb_dict
+        self.knowledge_consts = self._build_knowledge_consts(kb_dict)
         self.solver = cvc5.Solver()  # pylint: disable=all
         self.solver.setOption("produce-models", "true")
         self.solver.setOption("produce-unsat-cores", "true")
+
+    def _build_knowledge_consts(
+            self, kb_dict: Dict[str, KnowledgeBaseType]
+        ) -> Dict[str, KnowledgeType]:
+        knowledge_consts: Dict[str, KnowledgeType] = {
+            f"{kb_name}_{k_name}": knowledge for kb_name, kb in kb_dict.items()
+            for k_name, knowledge in kb.items()
+        }
+        return knowledge_consts
+
+    def _const2term(self, const: KnowledgeType) -> cvc5.Term:
+        """Assume that the const is not an empty array"""
+        if isinstance(const, int):
+            return self.solver.mkInteger(const)
+        if isinstance(const, str):
+            return self.solver.mkString(const)
+        assert isinstance(const, list) and len(const) > 0
+        if isinstance(const[0], int):
+            elements = (self.solver.mkInteger(e) for e in const)
+        else:
+            elements = (self.solver.mkString(e) for e in const)
+        element_terms = [self.solver.mkTerm(cvc5.Kind.SEQ_UNIT, e) for e in elements]
+        return self.solver.mkTerm(cvc5.Kind.SEQ_CONCAT, *element_terms)
+                
 
     def transition_body(self, *stmts: Tree[Token]):
         """Check satisfiability of transition body"""
@@ -161,12 +185,51 @@ class RuleSatChecker(Interpreter):
     def func_call(self, *children: Union[Tree[Token], Token]) -> cvc5.Term:
         """Special treatment of function call"""
         assert len(children) in [2, 3] and isinstance(children[0], Token)
+        arguments: List[cvc5.Term] = self.visit(children[-1])
         func_name = str(children[0].value)
+        # TODO: deal with imported and built-in functions
         if func_name == "length":
+            assert len(arguments) == 1
+            sequence = arguments[0]
+            return self.solver.mkTerm(cvc5.Kind.SEQ_LENGTH, sequence)
+        elif func_name == "reglang.count":
             pass
+        elif func_name == "reglang.count_member":
+            pass
+        elif func_name == "reglang.contains":
+            pass
+        else:
+            # "reglang.count_{le,ge,lt,gt,eq,neq}"
+            pass
+    
+    def func_arguments(self, *children: Union[Tree[Token], Token]) -> List[cvc5.Term]:
+        """Return a list of function argument terms"""
+        return [self.visit(child) for child in children if isinstance(child, Tree)]
+
+    def var_ref(self, var: Token):
+        """Symbol for variable, and constant for knowledge reference"""
+        var_name = str(var.value)
+        # case 1: knowledge reference
+        if var_name in self.knowledge_consts:
+            const = self.knowledge_consts[var_name]
+            return self._const2term(const)
+        # case 2: plain variable name
+        # TODO: need type inference
+        pass
+
+    def getitem(self, obj: Tree[Token], index: Tree[Token]) -> cvc5.Term:
+        """Return SEQ_NTH term or a new symbol"""
+        # TODO: need type inference & symbol manager
+        pass
+
+    def getattr(self, obj: Tree[Token], attr: Tree[Token]) -> cvc5.Term:
+        """Return a new symbol"""
+        # TODO: need type inference & symbol manager
+        pass
 
     def array(self, *children: Union[Tree[Token], Token]) -> cvc5.Term:
         """Return the array as a sequence term"""
+        # NOTE: count(...) leads to a boolean expression array
         assert len(children) > 0, "array should not be empty"
         element_units: List[cvc5.Term] = [
             self.solver.mkTerm(cvc5.Kind.SEQ_UNIT, e)
