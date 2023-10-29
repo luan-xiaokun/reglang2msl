@@ -6,7 +6,8 @@ from lark import Tree, Token
 from lark.visitors import Interpreter, v_args
 
 from .knowledge_base_translator import KnowledgeBaseType, KnowledgeType
-from .utils import string2int
+from .type_inference import MslTypeInference
+from .utils import string2int, MslAstSerializer
 
 
 @v_args(inline=True)
@@ -15,15 +16,26 @@ class RuleSatChecker(Interpreter):
 
     def __init__(self, kb_dict: Dict[str, KnowledgeBaseType]) -> None:
         self.knowledge_consts = self._build_knowledge_consts(kb_dict)
+        self.mti = MslTypeInference(kb_dict)
+        self.mas = MslAstSerializer()
+        self.types: Dict[Tree[Token], str] = {}
+        self.symbols: Dict[str, cvc5.Term] = {}
         self.solver = cvc5.Solver()  # pylint: disable=all
         self.solver.setOption("produce-models", "true")
         self.solver.setOption("produce-unsat-cores", "true")
+        self.solver.setLogic("ALL")
+
+    def _reset(self):
+        self.types = {}
+        self.solver.resetAssertions()
+        self.symbols = {}
 
     def _build_knowledge_consts(
-            self, kb_dict: Dict[str, KnowledgeBaseType]
-        ) -> Dict[str, KnowledgeType]:
+        self, kb_dict: Dict[str, KnowledgeBaseType]
+    ) -> Dict[str, KnowledgeType]:
         knowledge_consts: Dict[str, KnowledgeType] = {
-            f"{kb_name}_{k_name}": knowledge for kb_name, kb in kb_dict.items()
+            f"{kb_name}_{k_name}": knowledge
+            for kb_name, kb in kb_dict.items()
             for k_name, knowledge in kb.items()
         }
         return knowledge_consts
@@ -40,8 +52,24 @@ class RuleSatChecker(Interpreter):
         else:
             elements = (self.solver.mkString(e) for e in const)
         element_terms = [self.solver.mkTerm(cvc5.Kind.SEQ_UNIT, e) for e in elements]
+        if len(element_terms) == 1:
+            return element_terms[0]
         return self.solver.mkTerm(cvc5.Kind.SEQ_CONCAT, *element_terms)
-                
+
+    def _get_symbol_sort(self, symbol_type: str) -> cvc5.Sort:
+        assert symbol_type in ["int", "string", "bool", "int[]", "string[]", "bool[]"]
+        if symbol_type == "int":
+            return self.solver.getIntegerSort()
+        if symbol_type == "string":
+            return self.solver.getStringSort()
+        if symbol_type == "bool":
+            return self.solver.getBooleanSort()
+        if symbol_type == "int[]":
+            return self.solver.mkSequenceSort(self.solver.getIntegerSort())
+        if symbol_type == "string[]":
+            return self.solver.mkSequenceSort(self.solver.getStringSort())
+        if symbol_type == "bool[]":
+            return self.solver.mkSequenceSort(self.solver.getBooleanSort())
 
     def transition_body(self, *stmts: Tree[Token]):
         """Check satisfiability of transition body"""
@@ -54,6 +82,8 @@ class RuleSatChecker(Interpreter):
             return Tree("not_expr", [expr])
 
         rule_formulae = []
+        self._reset()
+        self.types.update(self.mti.visit(Tree("transition_body", list(stmts))))
 
         for stmt in filter(lambda stmt: stmt.data == "assign_stmt", stmts):
             assert len(stmt.children) == 3
@@ -80,13 +110,15 @@ class RuleSatChecker(Interpreter):
                 if len(negated_condition_terms) == 1
                 else self.solver.mkTerm(cvc5.Kind.AND, *negated_condition_terms)
             )
-            print(premise_term)
-            print(negated_condition_terms)
             formula = self.solver.mkTerm(
-                cvc5.Kind.IMPLIES,
+                cvc5.Kind.AND,
                 premise_term,
                 conclusion_term,
             )
+            print(formula)
+            rule_formulae.append(formula)
+
+        for formula in rule_formulae:
             self.solver.assertFormula(formula)
 
         print("result:", self.solver.checkSat())
@@ -184,27 +216,60 @@ class RuleSatChecker(Interpreter):
 
     def func_call(self, *children: Union[Tree[Token], Token]) -> cvc5.Term:
         """Special treatment of function call"""
-        assert len(children) in [2, 3] and isinstance(children[0], Token)
-        arguments: List[cvc5.Term] = self.visit(children[-1])
+        assert len(children) in [2, 3]
+        assert isinstance(children[0], Token) and isinstance(children[-1], Tree)
+        arguments: List[cvc5.Term] = [
+            self.visit(child) for child in children[-1].children if isinstance(child, Tree)
+        ]
         func_name = str(children[0].value)
-        # TODO: deal with imported and built-in functions
+
         if func_name == "length":
             assert len(arguments) == 1
             sequence = arguments[0]
             return self.solver.mkTerm(cvc5.Kind.SEQ_LENGTH, sequence)
-        elif func_name == "reglang.count":
-            pass
-        elif func_name == "reglang.count_member":
-            pass
-        elif func_name == "reglang.contains":
-            pass
-        else:
-            # "reglang.count_{le,ge,lt,gt,eq,neq}"
-            pass
-    
-    def func_arguments(self, *children: Union[Tree[Token], Token]) -> List[cvc5.Term]:
-        """Return a list of function argument terms"""
-        return [self.visit(child) for child in children if isinstance(child, Tree)]
+
+        if func_name == "reglang.count":
+            assert len(children[-1].children) == 1
+            assert (
+                isinstance(children[-1].children[0], Tree)
+                and children[-1].children[0].data == "array"
+            )
+            cond_array = children[-1].children[0].children
+            conditions: List[cvc5.Term] = [
+                self.visit(child) for child in cond_array if isinstance(child, Tree)
+            ]
+            int_terms = [
+                self.solver.mkTerm(
+                    cvc5.Kind.ITE, cond, self.solver.mkInteger(1), self.solver.mkInteger(0)
+                )
+                for cond in conditions
+            ]
+            if len(conditions) == 1:
+                return int_terms[0]
+
+            return self.solver.mkTerm(cvc5.Kind.ADD, *int_terms)
+
+        if func_name == "reglang.contains":
+            assert len(arguments) == 2
+            sequence, element = arguments
+            singleton = self.solver.mkTerm(cvc5.Kind.SEQ_UNIT, element)
+            return self.solver.mkTerm(cvc5.Kind.SEQ_CONTAINS, sequence, singleton)
+
+        assert func_name in [
+            "reglang.count_member",
+            "reglang.count_le",
+            "reglang.count_ge",
+            "reglang.count_lt",
+            "reglang.count_gt",
+            "reglang.count_eq",
+            "reglang.count_neq",
+        ]
+        assert len(arguments) == 2
+        # TODO: now we just use a new symbol variable to represent the result of the function
+        symbol_name = self.mas.visit(Tree("func_call", list(children)))
+        symbol_sort = self._get_symbol_sort("int")
+        symbol = self.solver.declareFun(symbol_name, [], symbol_sort)
+        return self.symbols.setdefault(symbol_name, symbol)
 
     def var_ref(self, var: Token):
         """Symbol for variable, and constant for knowledge reference"""
@@ -214,18 +279,37 @@ class RuleSatChecker(Interpreter):
             const = self.knowledge_consts[var_name]
             return self._const2term(const)
         # case 2: plain variable name
-        # TODO: need type inference
-        pass
+        symbol_sort = self._get_symbol_sort(self.types[Tree("var_ref", [var])])
+        symbol = self.solver.declareFun(var_name, [], symbol_sort)
+        return self.symbols.setdefault(var_name, symbol)
 
     def getitem(self, obj: Tree[Token], index: Tree[Token]) -> cvc5.Term:
         """Return SEQ_NTH term or a new symbol"""
         # TODO: need type inference & symbol manager
-        pass
+        this_tree = Tree("getitem", [obj, index])
+        symbol_sort = self._get_symbol_sort(self.types[this_tree])
+        # if the index is not a string, then it should be an integer (from array_item)
+        if index.data != "string":
+            index_term = self.visit(index)
+            assert index_term.getSort() == self.solver.getIntegerSort()
+            assert self.types[this_tree] in ["int", "string", "bool"]
+            seq_sort = self._get_symbol_sort(self.types[this_tree] + "[]")
+            seq_name = self.mas.visit(obj)
+            seq_symbol = self.solver.declareFun(seq_name, [], seq_sort)
+            seq_symbol_ = self.symbols.setdefault(seq_name, seq_symbol)
+            return self.solver.mkTerm(cvc5.Kind.SEQ_NTH, seq_symbol_, index_term)
+
+        symbol_name = self.mas.visit(this_tree)
+        symbol = self.solver.declareFun(symbol_name, [], symbol_sort)
+        return self.symbols.setdefault(symbol_name, symbol)
 
     def getattr(self, obj: Tree[Token], attr: Tree[Token]) -> cvc5.Term:
         """Return a new symbol"""
-        # TODO: need type inference & symbol manager
-        pass
+        this_tree = Tree("getattr", [obj, attr])
+        symbol_name = self.mas.visit(this_tree)
+        symbol_sort = self._get_symbol_sort(self.types[this_tree])
+        symbol = self.solver.declareFun(symbol_name, [], symbol_sort)
+        return self.symbols.setdefault(symbol_name, symbol)
 
     def array(self, *children: Union[Tree[Token], Token]) -> cvc5.Term:
         """Return the array as a sequence term"""
