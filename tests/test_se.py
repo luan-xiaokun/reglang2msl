@@ -13,8 +13,9 @@ rtb = RuleTransitionBuilder()
 
 def test_sat_checker(parser: Lark, test_examples: List[str]):
     """Test satisfiability checker on RegLang examples"""
-    with open("tests/reglang_examples/example2.rl", "r", encoding="utf-8") as example_file:
-        example = example_file.read()
+    # with open("tests/reglang_examples/example2.rl", "r", encoding="utf-8") as example_file:
+    #     example = example_file.read()
+    for example in test_examples:
         result = parser.parse(example)
 
         kb_dict = kbi.visit(result)

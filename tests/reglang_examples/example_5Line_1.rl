@@ -4,4 +4,5 @@ rule TxBasic1
 reg tx.function=="batchTransfer":
 require tx.args._value <= 100000;
 require tx.args._senders == "Alice";
+prohibit tx.args._value < 200000;
 end
