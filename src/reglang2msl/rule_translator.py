@@ -179,6 +179,14 @@ class RuleTransitionBuilder(Transformer):
         """prohibit_stmt is converted to a boolean condition"""
         return condition
 
+    def and_expr(self, *conditions: Tree[Token]) -> Tree[Token]:
+        """and_expr"""
+        return Tree("and_expr", list(conditions))
+
+    def or_expr(self, *conditions: Tree[Token]) -> Tree[Token]:
+        """or_expr"""
+        return Tree("or_expr", list(conditions))
+
     def compare_expr(self, left: Tree[Token], operator: Token, right: Tree[Token]) -> Tree[Token]:
         """compare_expr needs special treatment when one of its operands is a string"""
         # only when both operands are strings, and one of them cannot be converted to number
@@ -191,9 +199,11 @@ class RuleTransitionBuilder(Transformer):
             right_num = string2int(right.children[0].value.strip('"'))
             if left_num is None or right_num is None:
                 return Tree(tree_name, [left, operator, right])
-        if right.data in ["number", "string"] and left.data == "string":
+
+        node_types = ["number", "string", "power_expr", "mul_expr", "add_expr"]
+        if right.data in node_types and left.data == "string":
             left = self._convert_string_to_number(left)
-        if left.data in ["number", "string"] and right.data == "string":
+        if left.data in node_types and right.data == "string":
             right = self._convert_string_to_number(right)
         return Tree(tree_name, [left, operator, right])
 
@@ -325,9 +335,9 @@ class RuleTransitionBuilder(Transformer):
     def contract_state(self, address: Tree[Token], var: Tree[Token]) -> Tree[Token]:
         """Contract state attributes are translated into user-defined state mapping"""
         self.template_info.has_contract_var = True
-        if var.data == "var_ref":
-            assert len(var.children) == 1 and isinstance(var.children[0], Token)
-            var = Tree("string", [Token("STRING", f'"{var.children[0].value}"')])
+        assert var.data == "var_ref"
+        assert len(var.children) == 1 and isinstance(var.children[0], Token)
+        var = Tree("string", [Token("STRING", f'"{var.children[0].value}"')])
         contract_var: Tree[Token] = Tree("var_ref", [Token("NAME", "contract")])
         address_item: Tree[Token] = Tree("getitem", [contract_var, address])
         state_tree: Tree[Token] = Tree("getattr", [address_item, Token("NAME", "state")])
