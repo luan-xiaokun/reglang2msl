@@ -1,5 +1,5 @@
 """Symbolic execution to check satisfiability of RegLang"""
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
 
 import cvc5
 from lark import Tree, Token
@@ -27,6 +27,9 @@ class RuleSatChecker(Interpreter):
 
     def _reset(self):
         self.types = {}
+        self._reset_solver()
+
+    def _reset_solver(self):
         self.solver.resetAssertions()
         self.symbols = {}
 
@@ -71,7 +74,7 @@ class RuleSatChecker(Interpreter):
         if symbol_type == "bool[]":
             return self.solver.mkSequenceSort(self.solver.getBooleanSort())
 
-    def transition_body(self, *stmts: Tree[Token]):
+    def transition_body(self, *stmts: Tree[Token]) -> Tuple[List[int], List[int]]:
         """Check satisfiability of transition body"""
         assert all(stmt.data in ["skip_stmt", "assign_stmt"] for stmt in stmts)
 
@@ -81,11 +84,15 @@ class RuleSatChecker(Interpreter):
                 return expr.children[0]
             return Tree("not_expr", [expr])
 
-        rule_formulae = []
         self._reset()
         self.types.update(self.mti.visit(Tree("transition_body", list(stmts))))
+        empty_scope_rule_index = []
+        unsat_rule_index = []
 
-        for stmt in filter(lambda stmt: stmt.data == "assign_stmt", stmts):
+        for i, stmt in enumerate(stmts):
+            if stmt.data == "skip_stmt":
+                continue
+            self._reset_solver()
             assert len(stmt.children) == 3
             cond_expr = stmt.children[2]
 
@@ -110,18 +117,20 @@ class RuleSatChecker(Interpreter):
                 if len(negated_condition_terms) == 1
                 else self.solver.mkTerm(cvc5.Kind.AND, *negated_condition_terms)
             )
-            formula = self.solver.mkTerm(
-                cvc5.Kind.AND,
-                premise_term,
-                conclusion_term,
-            )
-            print(formula)
-            rule_formulae.append(formula)
+            # first check if the scope condition is satisfiable
+            self.solver.assertFormula(premise_term)
+            sat = self.solver.checkSat().isSat()
+            if not sat:
+                empty_scope_rule_index.append(i)
+                unsat_rule_index.append(i)
+                continue
+            # then check if all these conditions can be met
+            self.solver.assertFormula(conclusion_term)
+            sat = self.solver.checkSat().isSat()
+            if not sat:
+                unsat_rule_index.append(i)
 
-        for formula in rule_formulae:
-            self.solver.assertFormula(formula)
-
-        print("result:", self.solver.checkSat())
+        return empty_scope_rule_index, unsat_rule_index
 
     def not_expr(self, operand: Tree[Token]) -> cvc5.Term:
         """Negate a term"""
